@@ -30,7 +30,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-import argparse, urllib, urllib2, json, zlib, datetime, keychain
+import argparse, urllib, urllib2, json, zlib, datetime
+import sys
+if sys.platform == 'darwin':
+    import keychain
 
 VERSION = '1.0'
 ENDPOINT_SALES = 'https://reportingitc-reporter.apple.com/reportservice/sales/v1'
