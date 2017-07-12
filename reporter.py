@@ -8,7 +8,7 @@
 # It is written in pure Python and doesn’t need a Java runtime installation.
 # Opposed to Apple’s tool, it can fetch iTunes Connect login credentials from the
 # macOS Keychain in order to tighten security a bit. Also, it goes the extra mile
-# and unzips the downloaded reports.
+# and unzips the downloaded reports if possible.
 #
 # Copyright (c) 2016 fedoco <fedoco@users.noreply.github.com>
 #
@@ -35,7 +35,7 @@ import sys
 if sys.platform == 'darwin':
     import keychain
 
-VERSION = '1.0'
+VERSION = '2.1'
 ENDPOINT_SALES = 'https://reportingitc-reporter.apple.com/reportservice/sales/v1'
 ENDPOINT_FINANCE = 'https://reportingitc-reporter.apple.com/reportservice/finance/v1'
 
@@ -55,9 +55,9 @@ def get_accounts(credentials, service):
     endpoint = ENDPOINT_SALES if service == 'Sales' else ENDPOINT_FINANCE
     output_result(post_request(endpoint, credentials, command))
 
-def get_sales_report(credentials, vendor, datetype, date):
-    command = 'Sales.getReport, {0},Sales,Summary,{1},{2}'.format(vendor, datetype, date)
-    output_result(post_request(ENDPOINT_SALES, credentials, command))
+def get_vendor_and_regions(credentials):
+    command = 'Finance.getVendorsAndRegions'
+    output_result(post_request(ENDPOINT_FINANCE, credentials, command))
 
 def get_specific_sales_report(credentials, vendor, reporttype, datetype, date):
     command = 'Sales.getReport, {0},{1},Detailed,{2},{3}'.format(reporttype, vendor, datetype, date)
@@ -67,19 +67,41 @@ def get_financial_report(credentials, vendor, regioncode, fiscalyear, fiscalperi
     command = 'Finance.getReport, {0},{1},Financial,{2},{3}'.format(vendor, regioncode, fiscalyear, fiscalperiod)
     output_result(post_request(ENDPOINT_FINANCE, credentials, command))
 
-def get_vendor_and_regions(credentials):
-    command = 'Finance.getVendorsAndRegions'
-    output_result(post_request(ENDPOINT_FINANCE, credentials, command))
+def get_sales_report(credentials, vendor, datetype, date):
+    command = 'Sales.getReport, {0},Sales,Summary,{1},{2}'.format(vendor, datetype, date)
+    output_result(post_request(ENDPOINT_SALES, credentials, command))
+
+def get_subscription_report(credentials, vendor, date):
+    command = 'Sales.getReport, {0},Subscription,Summary,Daily,{1}'.format(vendor, date)
+    output_result(post_request(ENDPOINT_SALES, credentials, command))
+
+def get_subscription_event_report(credentials, vendor, date):
+    command = 'Sales.getReport, {0},SubscriptionEvent,Summary,Daily,{1}'.format(vendor, date)
+    output_result(post_request(ENDPOINT_SALES, credentials, command))
+
+def get_subscriber_report(credentials, vendor, date):
+    command = 'Sales.getReport, {0},Subscriber,Detailed,Daily,{1}'.format(vendor, date)
+    output_result(post_request(ENDPOINT_SALES, credentials, command))
+
+def get_newsstand_report(credentials, vendor, datetype, date):
+    command = 'Sales.getReport, {0},Newsstand,Detailed,{1},{2}'.format(vendor, datetype, date)
+    output_result(post_request(ENDPOINT_SALES, credentials, command))
+
+def get_opt_in_report(credentials, vendor, date):
+    command = 'Sales.getReport, {0},Sales,Opt-In,Weekly,{1}'.format(vendor, date)
+    output_result(post_request(ENDPOINT_SALES, credentials, command), False) # do not attempt to unzip because it's password protected
 
 # HTTP request
 
 def build_json_request_string(credentials, query):
     """Build a JSON string from the urlquoted credentials and the actual query input"""
 
-    userid, password, account, mode = credentials
+    userid, password, accessToken, account, mode = credentials
 
-    request_data = dict(userid=userid, password=password, version=VERSION, mode=mode, queryInput=query)
+    request_data = dict(userid=userid, version=VERSION, mode=mode, queryInput=query)
     if account: request_data.update(account=account) # empty account info would result in error 404 
+    if password: request_data.update(password=password)
+    if accessToken: request_data.update(accesstoken=accessToken)
 
     request = {k: urllib.quote_plus(v) for k, v in request_data.items()}
     request = json.dumps(request)
@@ -107,19 +129,23 @@ def post_request(endpoint, credentials, command):
         else:
             raise ValueError("HTTP Error %s. Did you choose reasonable query arguments?" % str(e.code))
 
-def output_result(result):
+def output_result(result, unzip = True):
     """Output (and when necessary unzip) the result of the request to the screen or into a report file"""
 
     content, header = result
 
     # unpack content into the final report file if it is gzip compressed.
     if header.gettype() == 'application/a-gzip':
-        content = zlib.decompress(content, 15 + 32)
-        filename = header.dict['filename'][:-3] or 'report.txt'
+        msg = header.dict['downloadmsg']
+        filename = header.dict['filename'] or 'report.txt.gz'
+        if unzip:
+            msg = msg.replace('.txt.gz', '.txt')
+            filename = filename[:-3]
+            content = zlib.decompress(content, 15 + 32)
         file = open(filename, 'w')
         file.write(content)
         file.close()
-        print header.dict['downloadmsg'].replace('.txt.gz', '.txt')
+        print msg
     else:
         print content
 
@@ -128,7 +154,7 @@ def output_result(result):
 def parse_arguments():
     """Build and parse the command line arguments"""
 
-    parser = argparse.ArgumentParser(description="Reporting tool for querying Sales- and Financial Reports from iTunes Connect")
+    parser = argparse.ArgumentParser(description="Reporting tool for querying Sales- and Financial Reports from iTunes Connect", epilog="For a detailed description of report types, see http://help.apple.com/itc/appssalesandtrends/#/itc37a18bcbf")
 
     # (most of the time) optional arguments
     parser.add_argument('-a', '--account', type=int, help="account number (needed if your Apple ID has access to multiple accounts; for a list of your account numbers, use the 'getAccounts' command)")
@@ -138,31 +164,54 @@ def parse_arguments():
     required_args = parser.add_argument_group("required arguments")
     required_args.add_argument('-u', '--userid', required=True, help="Apple ID for use with iTunes Connect")
     mutex_group = required_args.add_mutually_exclusive_group(required=True)
-    mutex_group.add_argument('-p', '--password-keychain-item', help="name of the macOS Keychain item that holds the Apple ID password (cannot be used together with -P)")
-    mutex_group.add_argument('-P', '--password', help="Apple ID password (cannot be used together with -p)")
+    mutex_group.add_argument('-t','--access-token-keychain-item', help='name of the macOS Keychain item that holds the access token')
+    mutex_group.add_argument('-T','--access-token', help='Access token (can be generated in iTunes Connect - Sales & Trends - Reports - About Reports)')
+    mutex_group.add_argument('-p', '--password-keychain-item', help="DEPRECATED: name of the macOS Keychain item that holds the Apple ID password (cannot be used together with -P)")
+    mutex_group.add_argument('-P', '--password', help="DEPRECATED: Apple ID password (cannot be used together with -p)")
     
     # commands
     subparsers = parser.add_subparsers(dest='command', title='commands', description="Specify the task you want to be carried out (use -h after a command's name to get additional help for that command)")
-    parser_1 = subparsers.add_parser('getStatus', help="check if iTunes Connect is available for queries")
-    parser_1.add_argument('service', choices=['Sales', 'Finance'], help="service endpoint to query")
+    parser_01 = subparsers.add_parser('getStatus', help="check if iTunes Connect is available for queries")
+    parser_01.add_argument('service', choices=['Sales', 'Finance'], help="service endpoint to query")
 
-    parser_2 = subparsers.add_parser('getAccounts', help="fetch a list of accounts accessible to the Apple ID given in -u")
-    parser_2.add_argument('service', choices=['Sales', 'Finance'], help="service endpoint to query")
+    parser_02 = subparsers.add_parser('getAccounts', help="fetch a list of accounts accessible to the Apple ID given in -u")
+    parser_02.add_argument('service', choices=['Sales', 'Finance'], help="service endpoint to query")
 
-    parser_3 = subparsers.add_parser('getVendors', help="fetch a list of vendors accessible to the Apple ID given in -u")
+    parser_03 = subparsers.add_parser('getVendors', help="fetch a list of vendors accessible to the Apple ID given in -u")
 
-    parser_4 = subparsers.add_parser('getSalesReport', help="download a sales report file for a specific date range")
-    parser_4.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
-    parser_4.add_argument('datetype', choices=['Daily', 'Weekly', 'Monthly', 'Yearly'], help="length of time covered by the report")
-    parser_4.add_argument('date', help="specific time covered by the report (weekly reports use YYYYMMDD, where the day used is the Sunday that week ends; monthly reports use YYYYMM; yearly reports use YYYY)")
+    parser_04 = subparsers.add_parser('getVendorsAndRegions', help="fetch a list of financial reports you can download by vendor number and region")
 
-    parser_5 = subparsers.add_parser('getFinancialReport', help="download a financial report file for a specific region and fiscal period")
-    parser_5.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
-    parser_5.add_argument('regioncode', help="two-character code of country of the report to download (for a list of country codes by vendor number, use the 'getVendorsAndRegions' command)")
-    parser_5.add_argument('fiscalyear', help="four-digit year of the report to download (year is specific to Apple’s fiscal calendar)") 
-    parser_5.add_argument('fiscalperiod', help="period in fiscal year for the report to download (1-12; period is specific to Apple’s fiscal calendar)")
+    parser_05 = subparsers.add_parser('getFinancialReport', help="download a financial report file for a specific region and fiscal period")
+    parser_05.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_05.add_argument('regioncode', help="two-character code of country of the report to download (for a list of country codes by vendor number, use the 'getVendorsAndRegions' command)")
+    parser_05.add_argument('fiscalyear', help="four-digit year of the report to download (year is specific to Apple’s fiscal calendar)")
+    parser_05.add_argument('fiscalperiod', help="period in fiscal year for the report to download (1-12; period is specific to Apple’s fiscal calendar)")
 
-    parser_6 = subparsers.add_parser('getVendorsAndRegions', help="fetch a list of financial reports you can download by vendor number and region")
+    parser_06 = subparsers.add_parser('getSalesReport', help="download a summary sales report file for a specific date range")
+    parser_06.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_06.add_argument('datetype', choices=['Daily', 'Weekly', 'Monthly', 'Yearly'], help="length of time covered by the report")
+    parser_06.add_argument('date', help="specific time covered by the report (weekly reports use YYYYMMDD, where the day used is the Sunday that week ends; monthly reports use YYYYMM; yearly reports use YYYY)")
+
+    parser_07 = subparsers.add_parser('getSubscriptionReport', help="download a subscription report file for a specific day")
+    parser_07.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_07.add_argument('date', help="specific day covered by the report (use YYYYMMDD format)")
+
+    parser_08 = subparsers.add_parser('getSubscriptionEventReport', help="download an aggregated subscriber activity report file for a specific day")
+    parser_08.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_08.add_argument('date', help="specific day covered by the report (use YYYYMMDD format)")
+
+    parser_09 = subparsers.add_parser('getSubscriberReport', help="download a transaction-level subscriber activity report file for a specific day")
+    parser_09.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_09.add_argument('date', help="specific day covered by the report (use YYYYMMDD format)")
+
+    parser_10 = subparsers.add_parser('getNewsstandReport', help="download a magazines & newspapers report file for a specific date range")
+    parser_10.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_10.add_argument('datetype', choices=['Daily', 'Weekly'], help="length of time covered by the report")
+    parser_10.add_argument('date', help="specific time covered by the report (weekly reports, like daily reports, use YYYYMMDD, where the day used is the Sunday that week ends")
+
+    parser_11 = subparsers.add_parser('getOptInReport', help="download contact information for customers who opt in to share their contact information with you")
+    parser_11.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_11.add_argument('date', help="specific day covered by the report (use YYYYMMDD format)")
 
     parser_7 = subparsers.add_parser('getSpecificSalesReport', help="download a sales report file for a specific report type and date or calendar unit")
     parser_7.add_argument('reporttype', choices=['Sales', 'PreOrder', 'Cloud', 'Event', 'Customer', 'Content', 'Station', 'Control', 'amEvent', 'amContent', 'amControl', 'amStreams'], help="report type according to documentation from Apple")
@@ -180,6 +229,12 @@ def validate_arguments(args):
            keychain.find_generic_password(None, args.password_keychain_item, '')
        except:
            raise ValueError("Error: Could not find an item named '{0}' in the default Keychain".format(args.password_keychain_item))
+
+    if args.access_token_keychain_item:
+       try:
+           keychain.find_generic_password(None, args.access_token_keychain_item, '')
+       except:
+           raise ValueError("Error: Could not find an item named '{0}' in the default Keychain".format(args.access_token_keychain_item))
 
     if not args.account and (args.command == 'getVendorsAndRegions' or args.command == 'getVendors' or args.command == 'getFinancialReport'):
         raise ValueError("Error: Argument -a/--account is needed for command '%s'" % args.command)
@@ -225,8 +280,9 @@ if __name__ == '__main__':
       exit(-1)
 
     password = keychain.find_generic_password(None, args.password_keychain_item, '') if args.password_keychain_item else args.password
+    access_token = keychain.find_generic_password(None, args.access_token_keychain_item, '') if args.access_token_keychain_item else args.access_token
 
-    credentials = (args.userid, password, str(args.account), args.mode)
+    credentials = (args.userid, password, access_token, str(args.account), args.mode)
 
     try:
       if args.command == 'getStatus':
@@ -243,6 +299,16 @@ if __name__ == '__main__':
           get_specific_sales_report(credentials, args.reporttype, args.vendor, args.datetype, args.date)
       elif args.command == 'getFinancialReport':
           get_financial_report(credentials, args.vendor, args.regioncode, args.fiscalyear, args.fiscalperiod)
+      elif args.command == 'getSubscriptionReport':
+          get_subscription_report(credentials, args.vendor, args.date)
+      elif args.command == 'getSubscriptionEventReport':
+          get_subscription_event_report(credentials, args.vendor, args.date)
+      elif args.command == 'getSubscriberReport':
+          get_subscriber_report(credentials, args.vendor, args.date)
+      elif args.command == 'getNewsstandReport':
+          get_newsstand_report(credentials, args.vendor, args.datetype, args.date)
+      elif args.command == 'getOptInReport':
+          get_opt_in_report(credentials, args.vendor, args.date)
     except ValueError, e:
        print e
        exit(-1)
