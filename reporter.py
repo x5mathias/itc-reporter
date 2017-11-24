@@ -59,8 +59,8 @@ def get_vendor_and_regions(credentials):
     command = 'Finance.getVendorsAndRegions'
     output_result(post_request(ENDPOINT_FINANCE, credentials, command))
 
-def get_specific_sales_report(credentials, vendor, reporttype, datetype, date):
-    command = 'Sales.getReport, {0},{1},Detailed,{2},{3}'.format(reporttype, vendor, datetype, date)
+def get_specific_sales_report(credentials, vendor, reporttype, datetype, date, version):
+    command = 'Sales.getReport, {0},{1},Detailed,{2},{3},{4}'.format(reporttype, vendor, datetype, date, version)
     output_result(post_request(ENDPOINT_SALES, credentials, command))
 
 def get_financial_report(credentials, vendor, regioncode, fiscalyear, fiscalperiod):
@@ -97,9 +97,10 @@ def build_json_request_string(credentials, query):
     """Build a JSON string from the urlquoted credentials and the actual query input"""
 
     userid, password, accessToken, account, mode = credentials
-
-    request_data = dict(userid=userid, version=VERSION, mode=mode, queryInput=query)
-    if account: request_data.update(account=account) # empty account info would result in error 404 
+    request_data = dict(version=VERSION, mode=mode, queryInput=query)
+    
+    if userid: request_data.update(userid=userid)
+    if account: request_data.update(account=str(account)) # empty account info would result in error 404 
     if password: request_data.update(password=password)
     if accessToken: request_data.update(accesstoken=accessToken)
 
@@ -159,10 +160,10 @@ def parse_arguments():
     # (most of the time) optional arguments
     parser.add_argument('-a', '--account', type=int, help="account number (needed if your Apple ID has access to multiple accounts; for a list of your account numbers, use the 'getAccounts' command)")
     parser.add_argument('-m', '--mode', choices=['Normal', 'Robot.XML'], default='Normal', help="output format: plain text or XML (defaults to '%(default)s')")
-
+    parser.add_argument('-u', '--userid', help="Apple ID for use with iTunes Connect")
+    
     # always required arguments
     required_args = parser.add_argument_group("required arguments")
-    required_args.add_argument('-u', '--userid', required=True, help="Apple ID for use with iTunes Connect")
     mutex_group = required_args.add_mutually_exclusive_group(required=True)
     mutex_group.add_argument('-t','--access-token-keychain-item', help='name of the macOS Keychain item that holds the access token')
     mutex_group.add_argument('-T','--access-token', help='Access token (can be generated in iTunes Connect - Sales & Trends - Reports - About Reports)')
@@ -218,6 +219,7 @@ def parse_arguments():
     parser_7.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
     parser_7.add_argument('datetype', choices=['Daily', 'Weekly', 'Monthly', 'Yearly'], help="length of time covered by the report")
     parser_7.add_argument('date', help="specific time covered by the report (weekly reports use YYYYMMDD, where the day used is the Sunday that week ends; monthly reports use YYYYMM; yearly reports use YYYY)")
+    parser_7.add_argument('version', nargs="?", help="Report version formatted like '1_0' or '1_1'", default="1_0")
 
     return parser.parse_args()
 
@@ -282,7 +284,7 @@ if __name__ == '__main__':
     password = keychain.find_generic_password(None, args.password_keychain_item, '') if args.password_keychain_item else args.password
     access_token = keychain.find_generic_password(None, args.access_token_keychain_item, '') if args.access_token_keychain_item else args.access_token
 
-    credentials = (args.userid, password, access_token, str(args.account), args.mode)
+    credentials = (args.userid, password, access_token, args.account, args.mode)
 
     try:
       if args.command == 'getStatus':
@@ -296,7 +298,7 @@ if __name__ == '__main__':
       elif args.command == 'getSalesReport':
           get_sales_report(credentials, args.vendor, args.datetype, args.date)
       elif args.command == 'getSpecificSalesReport':
-          get_specific_sales_report(credentials, args.reporttype, args.vendor, args.datetype, args.date)
+          get_specific_sales_report(credentials, args.reporttype, args.vendor, args.datetype, args.date, args.version)
       elif args.command == 'getFinancialReport':
           get_financial_report(credentials, args.vendor, args.regioncode, args.fiscalyear, args.fiscalperiod)
       elif args.command == 'getSubscriptionReport':
