@@ -63,6 +63,10 @@ def get_specific_sales_report(credentials, vendor, reporttype, datetype, date, v
     command = 'Sales.getReport, {0},{1},Detailed,{2},{3},{4}'.format(reporttype, vendor, datetype, date, version)
     output_result(post_request(ENDPOINT_SALES, credentials, command))
 
+def get_specific_demographics_report(credentials, vendor, reporttype, datetype, date, version):
+    command = 'Sales.getReport, {0},{1},Summary,{2},{3},{4}'.format(reporttype, vendor, datetype, date, version)
+    output_result(post_request(ENDPOINT_SALES, credentials, command))
+
 def get_financial_report(credentials, vendor, regioncode, fiscalyear, fiscalperiod):
     command = 'Finance.getReport, {0},{1},Financial,{2},{3}'.format(vendor, regioncode, fiscalyear, fiscalperiod)
     output_result(post_request(ENDPOINT_FINANCE, credentials, command))
@@ -98,7 +102,7 @@ def build_json_request_string(credentials, query):
 
     userid, password, accessToken, account, mode = credentials
     request_data = dict(version=VERSION, mode=mode, queryInput=query)
-    
+
     if userid: request_data.update(userid=userid)
     if account: request_data.update(account=str(account)) # empty account info would result in error 404 
     if password: request_data.update(password=password)
@@ -214,13 +218,20 @@ def parse_arguments():
     parser_11.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
     parser_11.add_argument('date', help="specific day covered by the report (use YYYYMMDD format)")
 
-    parser_7 = subparsers.add_parser('getSpecificSalesReport', help="download a sales report file for a specific report type and date or calendar unit")
-    parser_7.add_argument('reporttype', choices=['Sales', 'PreOrder', 'Cloud', 'Event', 'Customer', 'Content', 'Station', 'Control', 'amEvent', 'amContent', 'amControl', 'amStreams'], help="report type according to documentation from Apple")
-    parser_7.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
-    parser_7.add_argument('datetype', choices=['Daily', 'Weekly', 'Monthly', 'Yearly'], help="length of time covered by the report")
-    parser_7.add_argument('date', help="specific time covered by the report (weekly reports use YYYYMMDD, where the day used is the Sunday that week ends; monthly reports use YYYYMM; yearly reports use YYYY)")
-    parser_7.add_argument('version', nargs="?", help="Report version formatted like '1_0' or '1_1'", default="1_0")
+    parser_12 = subparsers.add_parser('getSpecificSalesReport', help="download a sales report file for a specific report type and date or calendar unit")
+    parser_12.add_argument('reporttype', choices=['Sales', 'PreOrder', 'Cloud', 'Event', 'Customer', 'Content', 'Station', 'Control', 'amEvent', 'amContent', 'amControl', 'amStreams'], help="report type according to documentation from Apple")
+    parser_12.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_12.add_argument('datetype', choices=['Daily', 'Weekly', 'Monthly', 'Yearly'], help="length of time covered by the report")
+    parser_12.add_argument('date', help="specific time covered by the report (weekly reports use YYYYMMDD, where the day used is the Sunday that week ends; monthly reports use YYYYMM; yearly reports use YYYY)")
+    parser_12.add_argument('version', nargs="?", help="Report version formatted like '1_0' or '1_1'", default="1_0")
 
+    parser_13 = subparsers.add_parser('getSpecificDemographicsReport', help="download a demographics report file for a specific report type and date or calendar unit")
+    parser_13.add_argument('reporttype', choices=['amContentDemographics', 'amArtistDemographics', 'ContentDemographics', 'ArtistDemographics'], help="report type according to documentation from Apple")
+    parser_13.add_argument('vendor', type=int, help="vendor number of the report to download (for a list of your vendor numbers, use the 'getVendors' command)")
+    parser_13.add_argument('datetype', choices=['Daily', 'Weekly', 'Monthly', 'Yearly'], help="length of time covered by the report")
+    parser_13.add_argument('date', help="specific time covered by the report (weekly reports use YYYYMMDD, where the day used is the Sunday that week ends; monthly reports use YYYYMM; yearly reports use YYYY)")
+    parser_13.add_argument('version', nargs="?", help="Report version formatted like '1_0' or '1_1'", default="1_0")
+	
     return parser.parse_args()
 
 def validate_arguments(args):
@@ -299,6 +310,8 @@ if __name__ == '__main__':
           get_sales_report(credentials, args.vendor, args.datetype, args.date)
       elif args.command == 'getSpecificSalesReport':
           get_specific_sales_report(credentials, args.reporttype, args.vendor, args.datetype, args.date, args.version)
+      elif args.command == 'getSpecificDemographicsReport':
+          get_specific_demographics_report(credentials, args.reporttype, args.vendor, args.datetype, args.date, args.version)
       elif args.command == 'getFinancialReport':
           get_financial_report(credentials, args.vendor, args.regioncode, args.fiscalyear, args.fiscalperiod)
       elif args.command == 'getSubscriptionReport':
